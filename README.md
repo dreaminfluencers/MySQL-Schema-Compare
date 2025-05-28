@@ -22,7 +22,7 @@ jobs:
         
       - name: 🔍 Compare MySQL Schemas
         id: schema-check
-        uses: hundeklemmen/mysql-schema-compare@main  # Update this to your actual action
+        uses: dreaminfluencers/MySQL-Schema-Compare@0.0.2
         with:
           # Production/Main database configuration
           main-db-host: ${{ secrets.PROD_DB_HOST }}

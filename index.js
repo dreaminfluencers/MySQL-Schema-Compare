@@ -6,6 +6,138 @@ class SchemaChecker {
   constructor() {
     this.mainDb = null;
     this.devDb = null;
+    this.capturedOutput = [];
+  }
+
+  // Capture console output for GitHub Actions summary
+  captureOutput(message) {
+    this.outputLines.push(message);
+    console.log(message);
+  }
+
+  // Override console.log temporarily to capture all output
+  setupOutputCapture() {
+    this.capturedOutput = [];
+    
+    // Store original console methods
+    this.originalConsole = {
+      log: console.log,
+      error: console.error,
+      warn: console.warn,
+      info: console.info
+    };
+    
+    // Override console methods to capture all output
+    const captureOutput = (type, originalMethod) => {
+      return (...args) => {
+        // Convert arguments to strings, handling chalk colors
+        const message = args.map(arg => {
+          if (typeof arg === 'string') {
+            // Strip ANSI color codes for clean summary output
+            return arg.replace(/\x1b\[[0-9;]*m/g, '');
+          }
+          return JSON.stringify(arg);
+        }).join(' ');
+        
+        this.capturedOutput.push({ type, message, timestamp: new Date().toISOString() });
+        originalMethod.apply(console, args);
+      };
+    };
+    
+    console.log = captureOutput('log', this.originalConsole.log);
+    console.error = captureOutput('error', this.originalConsole.error);
+    console.warn = captureOutput('warn', this.originalConsole.warn);
+    console.info = captureOutput('info', this.originalConsole.info);
+  }
+
+  restoreConsoleLog() {
+    // Restore all original console methods
+    console.log = this.originalConsole.log;
+    console.error = this.originalConsole.error;
+    console.warn = this.originalConsole.warn;
+    console.info = this.originalConsole.info;
+  }
+
+  // Generate GitHub Actions step summary with full console output
+  generateActionsSummary(result) {
+    const summary = [];
+    
+    summary.push('# 🔍 MySQL Schema Comparison Report');
+    summary.push('');
+    
+    // Status
+    if (result.isInSync) {
+      summary.push('## ✅ Status: In Sync');
+      summary.push('Main database has everything from dev database.');
+    } else {
+      summary.push('## ❌ Status: Out of Sync');
+      summary.push('Main database is missing elements from dev database.');
+    }
+    
+    summary.push('');
+    
+    // Summary statistics
+    summary.push('## 📊 Summary');
+    summary.push('| Category | Count |');
+    summary.push('|----------|-------|');
+    summary.push(`| Missing Tables | ${result.missingTables?.length || 0} |`);
+    summary.push(`| Missing Columns | ${result.missingColumns?.length || 0} |`);
+    summary.push(`| Different Columns | ${result.differentColumns?.length || 0} |`);
+    summary.push(`| Missing Indexes | ${result.missingIndexes?.length || 0} |`);
+    summary.push('');
+    
+    // Full console output
+    summary.push('## 📋 Full Console Output');
+    summary.push('');
+    summary.push('<details>');
+    summary.push('<summary>Click to view complete log</summary>');
+    summary.push('');
+    summary.push('```');
+    
+    if (this.capturedOutput && this.capturedOutput.length > 0) {
+      this.capturedOutput.forEach(output => {
+        const timestamp = new Date(output.timestamp).toLocaleTimeString();
+        summary.push(`[${timestamp}] ${output.message}`);
+      });
+    } else {
+      summary.push('No output captured');
+    }
+    
+    summary.push('```');
+    summary.push('</details>');
+    summary.push('');
+    
+    // Detailed differences (if any)
+    if (!result.isInSync) {
+      if (result.missingTables?.length > 0) {
+        summary.push('## 📋 Missing Tables');
+        result.missingTables.forEach(table => {
+          summary.push(`- ${table}`);
+        });
+        summary.push('');
+      }
+      
+      if (result.missingColumns?.length > 0) {
+        summary.push('## 📋 Missing Columns');
+        result.missingColumns.forEach(col => {
+          summary.push(`- ${col.table}.${col.column}`);
+        });
+        summary.push('');
+      }
+      
+      if (result.differentColumns?.length > 0) {
+        summary.push('## 📋 Different Columns');
+        result.differentColumns.forEach(col => {
+          summary.push(`- ${col.table}.${col.column}: ${col.difference}`);
+        });
+        summary.push('');
+      }
+    }
+    
+    summary.push('---');
+    summary.push(`Generated at: ${new Date().toISOString()}`);
+    
+    return summary.join('\n');
   }
 
   async connect() {
@@ -322,10 +454,24 @@ class SchemaChecker {
       }
 
       console.log(chalk.red('\n❌ Main database is missing elements from dev!'));
-      return false;
+      
+      return {
+        isInSync: false,
+        missingTables,
+        missingColumns,
+        differentColumns,
+        missingIndexes
+      };
     } else {
       console.log(chalk.green('\n✅ Main database has everything from dev!'));
-      return true;
+      
+      return {
+        isInSync: true,
+        missingTables: [],
+        missingColumns: [],
+        differentColumns: [],
+        missingIndexes: []
+      };
     }
   }
 }
@@ -334,14 +480,43 @@ async function main() {
   const checker = new SchemaChecker();
 
   try {
+    // Set up output capture for GitHub Actions
+    checker.setupOutputCapture();
+    
     await checker.connect();
-    const isInSync = await checker.checkAndReport();
-    process.exit(isInSync ? 0 : 1);
-  } catch (error) {
-    console.error(chalk.red('❌ Error:', error.message));
-    process.exit(1);
-  } finally {
+    const result = await checker.checkAndReport();
+    
+    // Restore original console methods
+    checker.restoreConsoleLog();
+    
+    // Generate GitHub Actions summary if running in GitHub Actions
+    if (process.env.GITHUB_ACTIONS) {
+      const summary = checker.generateActionsSummary(result);
+      
+      // Output to GitHub Actions step summary
+      core.summary.addRaw(summary).write();
+      
+      // Also set outputs
+      core.setOutput('is-in-sync', result.isInSync);
+      core.setOutput('missing-tables-count', result.missingTables.length);
+      core.setOutput('missing-columns-count', result.missingColumns.length);
+      core.setOutput('different-columns-count', result.differentColumns.length);
+      core.setOutput('missing-indexes-count', result.missingIndexes.length);
+    }
+    
     await checker.disconnect();
+    
+    // Exit with appropriate code
+    process.exit(result.isInSync ? 0 : 1);
+  } catch (error) {
+    console.error('Error:', error);
+    
+    // If running in GitHub Actions, also set failed status
+    if (process.env.GITHUB_ACTIONS) {
+      core.setFailed(`Schema comparison failed: ${error.message}`);
+    }
+    
+    process.exit(1);
   }
 }
 

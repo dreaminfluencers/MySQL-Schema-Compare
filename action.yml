@@ -1,0 +1,59 @@
+name: 'MySQL Schema Compare'
+description: 'Compare MySQL schemas between dev and main databases and generate a diff report'
+author: 'Dreaminfluencers'
+
+inputs:
+  main-db-host:
+    description: 'Main database host'
+    required: true
+  main-db-port:
+    description: 'Main database port'
+    required: false
+    default: '3306'
+  main-db-user:
+    description: 'Main database user'
+    required: true
+  main-db-password:
+    description: 'Main database password'
+    required: true
+  main-db-name:
+    description: 'Main database name'
+    required: true
+  main-db-ssl:
+    description: 'Enable SSL for main database connection'
+    required: false
+    default: 'false'
+  main-db-ssl-ca:
+    description: 'CA certificate for main database SSL connection (optional, use when ssl=true and custom CA is needed)'
+    required: false
+  dev-db-host:
+    description: 'Dev database host'
+    required: true
+  dev-db-port:
+    description: 'Dev database port'
+    required: false
+    default: '3306'
+  dev-db-user:
+    description: 'Dev database user'
+    required: true
+  dev-db-password:
+    description: 'Dev database password'
+    required: true
+  dev-db-name:
+    description: 'Dev database name'
+    required: true
+  dev-db-ssl:
+    description: 'Enable SSL for dev database connection'
+    required: false
+    default: 'false'
+  dev-db-ssl-ca:
+    description: 'CA certificate for dev database SSL connection (optional, use when ssl=true and custom CA is needed)'
+    required: false
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'database'
+  color: 'blue'

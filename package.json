@@ -1,0 +1,35 @@
+{
+  "name": "mysql-schema-compare",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node dist/index.js",
+    "build": "npx ncc build index.js -o dist",
+    "test": "npm run build && act pull_request --verbose -e payload.json",
+    "test-local": "node test-local.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dreaminfluencers/MySQL-Schema-Compare.git"
+  },
+  "author": "Dreaminfluencers",
+  "contributors": [
+    {
+      "name": "Alexander Møller",
+      "email": "am@dreaminfluencers.com"
+    }
+  ],
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/dreaminfluencers/MySQL-Schema-Compare/issues"
+  },
+  "homepage": "https://github.com/dreaminfluencers/MySQL-Schema-Compare#readme",
+  "description": "Compare MySQL schemas and generate a diff report",
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.1",
+    "@vercel/ncc": "^0.38.3",
+    "chalk": "^4.1.2",
+    "mysql2": "^3.14.1"
+  }
+}

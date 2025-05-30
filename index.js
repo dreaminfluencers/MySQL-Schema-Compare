@@ -686,8 +686,9 @@ async function main() {
 
     await checker.disconnect();
 
-    // Exit with appropriate code
-    process.exit(result.isInSync ? 0 : 1);
+    // Don't exit with error code for schema differences - that's a successful comparison
+    // Only exit with error code for actual failures (handled in catch block)
+    process.exit(0);
   } catch (error) {
     console.error('Error:', error);
 

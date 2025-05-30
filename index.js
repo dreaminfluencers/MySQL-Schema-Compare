@@ -140,6 +140,173 @@ class SchemaChecker {
     return summary.join('\n');
   }
 
+  // Generate detailed PR comment with SQL commands
+  async generatePRComment(result) {
+    const comment = [];
+    
+    comment.push('## 🚨 Database Schema Differences Detected');
+    comment.push('');
+    comment.push('The schema comparison between your development and production databases found differences:');
+    comment.push('');
+    
+    // Summary table
+    comment.push('| Category | Count |');
+    comment.push('|----------|-------|');
+    comment.push(`| Missing Tables | ${result.missingTables?.length || 0} |`);
+    comment.push(`| Missing Columns | ${result.missingColumns?.length || 0} |`);
+    comment.push(`| Different Columns | ${result.differentColumns?.length || 0} |`);
+    comment.push(`| Missing Indexes | ${result.missingIndexes?.length || 0} |`);
+    comment.push('');
+    
+    // Detailed differences
+    if (result.missingTables?.length > 0 || result.missingColumns?.length > 0 || result.differentColumns?.length > 0 || result.missingIndexes?.length > 0) {
+      comment.push('## 🔍 Detailed Differences');
+      comment.push('');
+      
+      // Group differences by table
+      const tableGroups = {};
+      
+      // Add missing tables
+      if (result.missingTables?.length > 0) {
+        result.missingTables.forEach(table => {
+          if (!tableGroups[table]) tableGroups[table] = { missing: true, columns: [], indexes: [] };
+        });
+      }
+      
+      // Add missing columns
+      if (result.missingColumns?.length > 0) {
+        result.missingColumns.forEach(({ table, column }) => {
+          if (!tableGroups[table]) tableGroups[table] = { columns: [], indexes: [] };
+          tableGroups[table].columns.push({ type: 'missing', column });
+        });
+      }
+      
+      // Add different columns
+      if (result.differentColumns?.length > 0) {
+        result.differentColumns.forEach(({ table, column, differences }) => {
+          if (!tableGroups[table]) tableGroups[table] = { columns: [], indexes: [] };
+          tableGroups[table].columns.push({ type: 'different', column, differences });
+        });
+      }
+      
+      // Add missing indexes
+      if (result.missingIndexes?.length > 0) {
+        result.missingIndexes.forEach(index => {
+          if (!tableGroups[index.table]) tableGroups[index.table] = { columns: [], indexes: [] };
+          tableGroups[index.table].indexes.push(index);
+        });
+      }
+      
+      // Display grouped differences
+      Object.keys(tableGroups).forEach(tableName => {
+        const group = tableGroups[tableName];
+        
+        if (group.missing) {
+          comment.push(`### ❌ Table: \`${tableName}\``);
+          comment.push('**Missing entire table in main database**');
+          comment.push('');
+        } else {
+          comment.push(`### ⚠️ Table: \`${tableName}\``);
+          
+          // Show column differences
+          if (group.columns.length > 0) {
+            comment.push('**Column differences:**');
+            group.columns.forEach(({ type, column, differences }) => {
+              if (type === 'missing') {
+                comment.push(`- ❌ Missing column: \`${column.name}\` (\`${column.type}\`)`);
+              } else if (type === 'different') {
+                comment.push(`- ⚠️ Different column: \`${column.name}\` - ${differences.join(', ')}`);
+              }
+            });
+            comment.push('');
+          }
+          
+          // Show index differences
+          if (group.indexes.length > 0) {
+            comment.push('**Index differences:**');
+            group.indexes.forEach(index => {
+              const columns = index.columns.join(', ');
+              const unique = index.unique ? 'UNIQUE ' : '';
+              comment.push(`- ❌ Missing ${unique}index: \`${index.name}\` on columns (\`${columns}\`)`);
+            });
+            comment.push('');
+          }
+        }
+      });
+      
+      // SQL Commands section
+      comment.push('## 📋 SQL Commands to Fix');
+      comment.push('');
+      comment.push('<details>');
+      comment.push('<summary>Click to view SQL commands</summary>');
+      comment.push('');
+      comment.push('```sql');
+      
+      // Missing tables
+      if (result.missingTables?.length > 0) {
+        comment.push('-- Missing Tables --');
+        for (const table of result.missingTables) {
+          const createStatement = await this.getCreateTableStatement(this.devDb, table);
+          comment.push(createStatement + ';');
+          comment.push('');
+        }
+      }
+      
+      // Missing columns
+      if (result.missingColumns?.length > 0) {
+        comment.push('-- Missing Columns --');
+        for (const { table, column } of result.missingColumns) {
+          const alterStatement = this.generateAlterColumnCommand(table, column);
+          comment.push(alterStatement);
+        }
+        comment.push('');
+      }
+      
+      // Different columns
+      if (result.differentColumns?.length > 0) {
+        comment.push('-- Modified Columns (review carefully before running) --');
+        for (const { table, column, differences } of result.differentColumns) {
+          comment.push(`-- Column ${column.name} in table ${table}: ${differences.join(', ')}`);
+          const modifyStatement = this.generateModifyColumnCommand(table, column);
+          comment.push(modifyStatement);
+        }
+        comment.push('');
+      }
+      
+      // Missing indexes
+      if (result.missingIndexes?.length > 0) {
+        comment.push('-- Missing Indexes --');
+        for (const index of result.missingIndexes) {
+          const createStatement = this.generateCreateIndexCommand(index);
+          comment.push(createStatement);
+        }
+      }
+      
+      comment.push('```');
+      comment.push('</details>');
+      comment.push('');
+    }
+    
+    // Next steps
+    comment.push('### 📋 Next Steps:');
+    comment.push(`1. Review the detailed comparison in the [Actions summary](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})`);
+    comment.push('2. Apply the generated SQL commands to your production database');
+    comment.push('3. Re-run this check to verify the changes');
+    comment.push('');
+    
+    // Important notes
+    comment.push('### ⚠️ Important:');
+    comment.push('- Review all SQL commands before executing them');
+    comment.push('- Consider creating a backup before applying changes');
+    comment.push('- Test changes in a staging environment first');
+    comment.push('');
+    
+    comment.push('---');
+    comment.push('🤖 *This comment was automatically generated by the MySQL Schema Compare action*');
+    
+    return comment.join('\n');
+  }
+
   async connect() {
     console.log(chalk.blue('🚀 Connecting to databases (read-only)...\n'));
     
@@ -482,40 +649,75 @@ async function main() {
   try {
     // Set up output capture for GitHub Actions
     checker.setupOutputCapture();
-    
+
     await checker.connect();
     const result = await checker.checkAndReport();
-    
+
     // Restore original console methods
     checker.restoreConsoleLog();
-    
+
     // Generate GitHub Actions summary if running in GitHub Actions
     if (process.env.GITHUB_ACTIONS) {
       const summary = checker.generateActionsSummary(result);
-      
+
       // Output to GitHub Actions step summary
       core.summary.addRaw(summary).write();
-      
+
       // Also set outputs
       core.setOutput('is-in-sync', result.isInSync);
       core.setOutput('missing-tables-count', result.missingTables.length);
       core.setOutput('missing-columns-count', result.missingColumns.length);
       core.setOutput('different-columns-count', result.differentColumns.length);
       core.setOutput('missing-indexes-count', result.missingIndexes.length);
+
+      // Post PR comment based on result
+      if (!result.isInSync) {
+        const body = await checker.generatePRComment(result);
+
+        const github = require('@actions/github');
+        await github.getOctokit(process.env.GITHUB_TOKEN).rest.issues.createComment({
+          issue_number: github.context.issue.number,
+          owner: github.context.repo.owner,
+          repo: github.context.repo.repo,
+          body
+        });
+      }
     }
-    
+
     await checker.disconnect();
-    
+
     // Exit with appropriate code
     process.exit(result.isInSync ? 0 : 1);
   } catch (error) {
     console.error('Error:', error);
-    
+
     // If running in GitHub Actions, also set failed status
     if (process.env.GITHUB_ACTIONS) {
       core.setFailed(`Schema comparison failed: ${error.message}`);
+
+      // Post PR comment for connection errors
+      const body = `## ❌ Schema Comparison Failed
+
+The database schema comparison encountered an error. Please check the [action logs](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}) for details.
+
+Common issues:
+- Database connection problems
+- Invalid credentials
+- Network connectivity issues
+- SSL/TLS configuration problems
+
+---
+🤖 *This comment was automatically generated by the MySQL Schema Compare action*`;
+
+      const github = require('@actions/github');
+      await github.getOctokit(process.env.GITHUB_TOKEN).rest.issues.createComment({
+        issue_number: github.context.issue.number,
+        owner: github.context.repo.owner,
+        repo: github.context.repo.repo,
+        body
+      });
     }
-    
+
     process.exit(1);
   }
 }
